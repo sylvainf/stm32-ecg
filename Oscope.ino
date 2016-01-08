@@ -10,7 +10,13 @@ ILI9341 display code inspired by Ray Burnette Maple-o-scope project and the STM3
 #include <SPI.h>
 
 #include "./firFilter.h"
+#include "./Average.h"
 
+Average<int> samplesTable(200);
+
+float averagePulse;
+int minPulse;
+int maxPulse;
 
 // ILI9341 TFT GLCD display connections for hardware SPI
 // Signal           Maple Mini         Leonardo      LCD Display    UNO pins
@@ -138,12 +144,15 @@ void loop()
 
    //Pulse RED
    sensorspO2red = FilterRed.run(tmpSignalspO2red/16);
-   signalYspO2red = map(sensorspO2red,  400,  800,  myHeight-1,  1   ) +30;
+   samplesTable.push(sensorspO2red);
+   minPulse=samplesTable.minimum();
+   maxPulse=samplesTable.maximum();
+   signalYspO2red = map(sensorspO2red,  minPulse-20,  maxPulse+20,  myHeight-1,  1   ) +30;
    TFT.drawLine(j, lastspO2red, j+1, signalYspO2red, ILI9341_RED) ;
 
    //Pulse IR 
    sensorspO2ir = FilterIR.run(tmpSignalspO2ir/16);
-   signalYspO2ir = map(sensorspO2ir,  400,  800,  myHeight-1,  1   ) +30;
+   signalYspO2ir = map(sensorspO2ir,  minPulse-20,  maxPulse+20,  myHeight-1,  1   ) +30;
    TFT.drawLine(j, lastspO2ir, j+1, signalYspO2ir, ILI9341_GREEN) ;
    
     if(last -signalY > 20){
