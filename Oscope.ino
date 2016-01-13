@@ -12,11 +12,21 @@ ILI9341 display code inspired by Ray Burnette Maple-o-scope project and the STM3
 #include "./firFilter.h"
 #include "./Average.h"
 
-Average<int> samplesTable(200);
+Average<int> samplesTableRed(80);
+Average<int> samplesTableIR(80);
+Average<int> samplesTableECG(80);
 
-float averagePulse;
-int minPulse;
-int maxPulse;
+int minPulseRed=0;
+int maxPulseRed;
+
+int minPulseIR=0;
+int maxPulseIR;
+
+int minECG=0;
+int maxECG;
+
+float ratio;
+float spO2;
 
 // ILI9341 TFT GLCD display connections for hardware SPI
 // Signal           Maple Mini         Leonardo      LCD Display    UNO pins
@@ -35,7 +45,7 @@ int maxPulse;
 #define inputPinspO2 3
 float sensorspO2red= 0;
 float sensorspO2ir= 0;
-float bloodOx = 0;
+
 
 // create lcd object
 Adafruit_ILI9341_STM TFT = Adafruit_ILI9341_STM(TFT_CS, TFT_DC, TFT_RST); // Using hardware SPI
@@ -71,17 +81,11 @@ uint16_t signalYspO2ir;
 uint16_t last;
 uint16_t lastspO2red;
 uint16_t lastspO2ir;
-uint16_t tmpSignalECG;
-uint16_t tmpSignalspO2red;
-uint16_t tmpSignalspO2ir;
 uint32 lastTime;
 uint16_t freq;
 uint32 delays;
 uint32 newTime;
-int16_t xZoomFactor = 1;
-// yZoomFactor (percentage)
-int16_t yZoomFactor = 200;
-int16_t yPosition = -150 ;
+
 
 firFilter FilterRed;
 firFilter FilterIR;
@@ -97,6 +101,9 @@ void setup()
   TFT.setRotation(3);
   myWidth   = TFT.width() ;
   myHeight  = TFT.height();
+  maxPulseRed = ANALOG_MAX_VALUE;
+  maxPulseIR = ANALOG_MAX_VALUE;
+  maxECG=ANALOG_MAX_VALUE;
   clearTFT();
   TFT.setTextSize(2);                           // Small 26 char / line 
   TFT.setTextColor(ILI9341_YELLOW, ILI9341_BLACK) ;
@@ -114,48 +121,47 @@ void setup()
 
 void loop()
 {
+  int ECGSignal;
+  int lastY;
  // TFT.setTextSize(2);
  // TFT.setCursor(200, 10);
  // TFT.print(freq);
+ ratio = (log(maxPulseRed-minPulseRed)/log(maxPulseIR-minPulseIR));
+  
+  TFT.setTextSize(2);
+      TFT.setCursor(10, 10);
+      TFT.print("         ");
+      TFT.setCursor(10, 10);
+      TFT.print(ratio);
   for(uint16_t j = 0; j <= myWidth; j++ )
   {
-    // average mesure against noise
-    tmpSignalECG=0;
-    tmpSignalspO2red=0;
-    tmpSignalspO2ir=0;
-    for(uint16_t k = 0; k < 16; k++ ){
-      delayMicroseconds(500);
-      tmpSignalECG= tmpSignalECG+analogRead(analogInPin);
-      digitalWrite(LEDIR,LOW);
-      digitalWrite(LEDRed, HIGH);
-      delayMicroseconds(5);
-      tmpSignalspO2red= tmpSignalspO2red+analogRead(inputPinspO2);
-      digitalWrite(LEDIR,HIGH);
-      digitalWrite(LEDRed, LOW);
-      delayMicroseconds(5);
-      tmpSignalspO2ir= tmpSignalspO2ir+analogRead(inputPinspO2);
-      
-    }
-
-   //ECG 
-   signalY = map(tmpSignalECG/16,  1,  4090,  myHeight-1,  1   ) +30;
-   TFT.drawFastVLine( j+1,  30, myHeight, ILI9341_BLACK);
-   TFT.drawLine(j, last, j+1, signalY, ILI9341_YELLOW) ;
-
+    TFT.drawFastVLine( j+1,  30, myHeight, ILI9341_BLACK);
+    
    //Pulse RED
-   sensorspO2red = FilterRed.run(tmpSignalspO2red/16);
-   samplesTable.push(sensorspO2red);
-   minPulse=samplesTable.minimum();
-   maxPulse=samplesTable.maximum();
-   signalYspO2red = map(sensorspO2red,  minPulse-20,  maxPulse+20,  myHeight-1,  1   ) +30;
-   TFT.drawLine(j, lastspO2red, j+1, signalYspO2red, ILI9341_RED) ;
+   sensorspO2red = FilterRed.run(redPulseSample());
+   //sensorspO2red = redPulseSample();
+   samplesTableRed.push(sensorspO2red);
+   signalYspO2red = map(sensorspO2red,  minPulseRed-20,  maxPulseRed+20,  myHeight,  150   );
+  // TFT.drawLine(j, lastspO2red, j+1, signalYspO2red, ILI9341_RED) ;
 
-   //Pulse IR 
-   sensorspO2ir = FilterIR.run(tmpSignalspO2ir/16);
-   signalYspO2ir = map(sensorspO2ir,  minPulse-20,  maxPulse+20,  myHeight-1,  1   ) +30;
-   TFT.drawLine(j, lastspO2ir, j+1, signalYspO2ir, ILI9341_GREEN) ;
+   delay(5);
+   //ECG 
+   ECGSignal=ECGSample();
+   samplesTableECG.push(ECGSignal);  
+   signalY = map(ECGSignal,  0,  ANALOG_MAX_VALUE,  myHeight-100,  30); 
+   TFT.drawLine(j, lastY, j+1, signalY, ILI9341_YELLOW) ;
+
    
-    if(last -signalY > 20){
+   
+   //Pulse IR 
+   sensorspO2ir = FilterIR.run(IRPulseSample());
+   samplesTableIR.push(sensorspO2ir);  
+   signalYspO2ir = map(sensorspO2ir,  minPulseIR-20,  maxPulseIR+20,  myHeight,  150   );
+   TFT.drawLine(j, lastspO2ir, j+1, signalYspO2ir, ILI9341_GREEN) ;
+
+   
+    if( (last< samplesTableECG.mean()-5) && (ECGSignal
+    > samplesTableECG.mean()+5)){
       newTime=millis();
       delays=newTime-lastTime;
       freq=60000/delays;
@@ -168,11 +174,21 @@ void loop()
         TFT.print(freq);
     }
 
-    
-    last=signalY;
+
+    lastY=signalY;
+    last=ECGSignal;
     lastspO2red=signalYspO2red;
     lastspO2ir=signalYspO2ir;
+    
+
   }
+  
+    minPulseRed=samplesTableRed.minimum();
+    maxPulseRed=samplesTableRed.maximum();
+    minPulseIR=samplesTableIR.minimum();
+    maxPulseIR=samplesTableIR.maximum();
+    minECG=samplesTableECG.minimum();
+    maxECG=samplesTableECG.maximum();
 }
 
 
@@ -180,6 +196,48 @@ void loop()
 void clearTFT()
 {
   TFT.fillScreen(BEAM_OFF_COLOUR);                // Blank the display
+}
+
+
+int ECGSample(){     //300micros slot
+      int sampleValue=0;
+      int nbmes=20;
+      for(uint16_t k = 0; k < nbmes; k++ ){
+        sampleValue = sampleValue + analogRead(analogInPin);  
+        delayMicroseconds(100);
+      }
+      return sampleValue/nbmes;
+}
+
+
+int redPulseSample(){     //300micros slot
+      int sampleValue=0;
+      int nbmes=20;
+      digitalWrite(LEDIR,LOW);
+      digitalWrite(LEDRed, HIGH);
+      delayMicroseconds(5);
+      for(uint16_t k = 0; k < nbmes; k++ ){
+        sampleValue = sampleValue + analogRead(inputPinspO2);  
+        delayMicroseconds(100);
+      }
+      digitalWrite(LEDIR,LOW);
+      digitalWrite(LEDRed, LOW);
+      return sampleValue/nbmes;
+}
+
+int IRPulseSample(){     //300micros slot
+      int sampleValue=0;
+      int nbmes=20;
+      digitalWrite(LEDIR,HIGH);
+      digitalWrite(LEDRed, LOW);
+      delayMicroseconds(5);
+      for(uint16_t k = 0; k < nbmes; k++ ){
+        sampleValue = sampleValue + analogRead(inputPinspO2);  
+        delayMicroseconds(100);
+      }
+      digitalWrite(LEDIR,LOW);
+      digitalWrite(LEDRed, LOW);
+      return sampleValue/nbmes;
 }
 
 
